@@ -340,6 +340,16 @@ DEFINE_RUN_ONCE_STATIC(ossl_init_zlib)
     zlib_inited = 1;
     return 1;
 }
+
+static CRYPTO_ONCE brotli = CRYPTO_ONCE_STATIC_INIT;
+
+static int brotli_inited = 0;
+DEFINE_RUN_ONCE_STATIC(ossl_init_brotli)
+{
+    /* Do nothing - we need to know about this for the later cleanup */
+    brotli_inited = 1;
+    return 1;
+}
 #endif
 
 void OPENSSL_cleanup(void)
@@ -387,6 +397,10 @@ void OPENSSL_cleanup(void)
     if (zlib_inited) {
         OSSL_TRACE(INIT, "OPENSSL_cleanup: ossl_comp_zlib_cleanup()\n");
         ossl_comp_zlib_cleanup();
+    }
+    if (brotli_inited) {
+        OSSL_TRACE(INIT, "OPENSSL_cleanup: ossl_comp_brotli_cleanup()\n");
+        ossl_comp_brotli_cleanup();
     }
 #endif
 
@@ -647,6 +661,9 @@ int OPENSSL_init_crypto(uint64_t opts, const OPENSSL_INIT_SETTINGS *settings)
 #ifndef OPENSSL_NO_COMP
     if ((opts & OPENSSL_INIT_ZLIB)
             && !RUN_ONCE(&zlib, ossl_init_zlib))
+        return 0;
+    if ((opts & OPENSSL_INIT_BROTLI)
+            && !RUN_ONCE(&brotli, ossl_init_brotli))
         return 0;
 #endif
 
