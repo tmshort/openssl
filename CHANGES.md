@@ -23,6 +23,11 @@ OpenSSL 3.0
 
 ### Changes between 1.1.1 and 3.0 [xx XXX xxxx]
 
+ * Added support for certificate compression (RFC8879), including
+   library support for Brotli and Zstandard compression.
+
+   *Todd Short*
+
  * Added support for Kernel TLS (KTLS). In order to use KTLS, support for it
    must be compiled in using the "enable-ktls" compile time option. It must
    also be enabled at run time using the SSL_OP_ENABLE_KTLS option.
