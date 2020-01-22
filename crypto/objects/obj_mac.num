@@ -1245,3 +1245,4 @@ signedObject		1244
 rpkiNotify		1245
 id_ct_geofeedCSVwithCRLF		1246
 brotli		1247
+zstd		1248

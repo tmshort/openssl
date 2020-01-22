@@ -5432,6 +5432,10 @@
 #define LN_brotli               "Brotli compression"
 #define NID_brotli              1247
 
+#define SN_zstd         "zstd"
+#define LN_zstd         "Zstandard compression"
+#define NID_zstd                1248
+
 #endif /* OPENSSL_OBJ_MAC_H */
 
 #ifndef OPENSSL_NO_DEPRECATED_3_0
