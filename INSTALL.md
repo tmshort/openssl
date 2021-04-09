@@ -395,20 +395,29 @@ Compression Algorithm Flags
 
     --with-brotli-include=DIR
 
-The directory for the location of the brotli include file.  This option is only
-necessary if [brotli](#brotli) is used and the include file is not
-already on the system include path.
+The directory for the location of the brotli include files (i.e. the location of the
+**brotli** include directory).  This option is only necessary if [brotli](#brotli) is
+used and the include files are not already on the system include path.
 
 ### with-brotli-lib
 
     --with-brotli-lib=LIB
 
-**On Unix**: this is the directory containing the brotli library.
-If not provided the system library path will be used.
+**On Unix**: this is the directory containing the brotli libraries.
+If not provided, the system library path will be used.
 
-**On Windows:** no support.
+The names of the libraries are:
+* brotlicommon-static
+* brotlidec-static
+* brotlienc-static
 
-**On VMS:** no support.
+**On Windows:** this is the direcory containing the brotli libraries.
+If not provided, the system library path will be used.
+
+The names of the libraries are:
+* brotlicommon.lib
+* brotlidec.lib
+* brotlienc.lib
 
 ### with-zlib-include
 

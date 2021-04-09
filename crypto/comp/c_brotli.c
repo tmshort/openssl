@@ -17,6 +17,7 @@
 #include <openssl/err.h>
 #include "crypto/cryptlib.h"
 #include "internal/bio.h"
+#include "internal/thread_once.h"
 #include "comp_local.h"
 
 COMP_METHOD *COMP_brotli(void);
@@ -38,14 +39,14 @@ static COMP_METHOD brotli_method_nobrotli = {
 # include <brotli/encode.h>
 
 /* memory allocations functions for brotli initialisation */
-void *brotli_alloc(void *opaque, size_t size)
+static void *brotli_alloc(void *opaque, size_t size)
 {
     return OPENSSL_zalloc(size);
 }
 
-void brotli_free(void *opaque, void *address)
+static void brotli_free(void *opaque, void *address)
 {
-    return OPENSSL_free(address);
+    OPENSSL_free(address);
 }
 
 /*
@@ -156,8 +157,8 @@ static void brotli_stateful_finish(COMP_CTX *ctx)
 }
 
 static int brotli_stateful_compress_block(COMP_CTX *ctx, unsigned char *out,
-                                        unsigned int olen, unsigned char *in,
-                                        unsigned int ilen)
+                                          unsigned int olen, unsigned char *in,
+                                          unsigned int ilen)
 {
     BROTLI_BOOL done;
     struct brotli_state *state = ctx->data;
@@ -183,12 +184,12 @@ static int brotli_stateful_compress_block(COMP_CTX *ctx, unsigned char *out,
         || BrotliEncoderHasMoreOutput(state->encoder))
         return -1;
 
-    return olen - out_avail;
+    return (int)(olen - out_avail);
 }
 
 static int brotli_stateful_expand_block(COMP_CTX *ctx, unsigned char *out,
-                                      unsigned int olen, unsigned char *in,
-                                      unsigned int ilen)
+                                        unsigned int olen, unsigned char *in,
+                                        unsigned int ilen)
 {
     BrotliDecoderResult result;
     struct brotli_state *state = ctx->data;
@@ -206,7 +207,7 @@ static int brotli_stateful_expand_block(COMP_CTX *ctx, unsigned char *out,
         || BrotliDecoderHasMoreOutput(state->decoder))
         return -1;
 
-    return olen - out_avail;
+    return (int)(olen - out_avail);
 }
 
 
@@ -243,7 +244,7 @@ static int brotli_oneshot_compress_block(COMP_CTX *ctx, unsigned char *out,
                               &out_size, out) == BROTLI_FALSE)
         return -1;
 
-    return out_size;
+    return (int)out_size;
 }
 
 static int brotli_oneshot_expand_block(COMP_CTX *ctx, unsigned char *out,
@@ -258,7 +259,7 @@ static int brotli_oneshot_expand_block(COMP_CTX *ctx, unsigned char *out,
     if (BrotliDecoderDecompress(ilen, in, &out_size, out) != BROTLI_DECODER_RESULT_SUCCESS)
         return -1;
 
-    return out_size;
+    return (int)out_size;
 }
 
 static COMP_METHOD brotli_oneshot_method = {
@@ -270,13 +271,11 @@ static COMP_METHOD brotli_oneshot_method = {
     brotli_oneshot_expand_block
 };
 
-static int ossl_comp_brotli_init(void)
+static CRYPTO_ONCE brotli_once = CRYPTO_ONCE_STATIC_INIT;
+DEFINE_RUN_ONCE_STATIC(ossl_comp_brotli_init)
 {
 # ifdef BROTLI_SHARED
 #  if defined(OPENSSL_SYS_WINDOWS) || defined(OPENSSL_SYS_WIN32)
-#   define LIBBROTLIENC "BROTLIENC1"
-#   define LIBBROTLIDEC "BROTLIDEC1"
-#  elif defined(OPENSSL_SYS_VMS)
 #   define LIBBROTLIENC "BROTLIENC"
 #   define LIBBROTLIDEC "BROTLIDEC"
 #  else
@@ -326,7 +325,7 @@ COMP_METHOD *COMP_brotli(void)
     COMP_METHOD *meth = &brotli_method_nobrotli;
 
 #ifdef BROTLI
-    if (ossl_comp_brotli_init())
+    if (RUN_ONCE(&brotli_once, ossl_comp_brotli_init))
         meth = &brotli_stateful_method;
 #endif
     return meth;
@@ -337,7 +336,7 @@ COMP_METHOD *COMP_brotli_oneshot(void)
     COMP_METHOD *meth = &brotli_method_nobrotli;
 
 #ifdef BROTLI
-    if (ossl_comp_brotli_init())
+    if (RUN_ONCE(&brotli_once, ossl_comp_brotli_init))
         meth = &brotli_oneshot_method;
 #endif
     return meth;
@@ -433,13 +432,13 @@ static int bio_brotli_new(BIO *bi)
 # ifdef BROTLI_SHARED
     (void)COMP_brotli();
     if (brotli_encode_dso == NULL || brotli_decode_dso == NULL) {
-        COMPerr(COMP_F_BIO_BROTLI_NEW, COMP_R_BROTLI_NOT_SUPPORTED);
+        ERR_raise(ERR_LIB_COMP, COMP_R_BROTLI_NOT_SUPPORTED);
         return 0;
     }
 # endif
     ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (ctx == NULL) {
-        COMPerr(COMP_F_BIO_BROTLI_NEW, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_COMP, ERR_R_MALLOC_FAILURE);
         return 0;
     }
     ctx->decode.bufsize = BROTLI_DEFAULT_BUFSIZE;
@@ -457,7 +456,7 @@ static int bio_brotli_new(BIO *bi)
     return 1;
 
  err:
-    COMPerr(COMP_F_BIO_BROTLI_NEW, ERR_R_MALLOC_FAILURE);
+    ERR_raise(ERR_LIB_COMP, ERR_R_MALLOC_FAILURE);
     BrotliDecoderDestroyInstance(ctx->decode.state);
     BrotliEncoderDestroyInstance(ctx->encode.state);
     OPENSSL_free(ctx);
@@ -500,7 +499,7 @@ static int bio_brotli_read(BIO *b, char *out, int outl)
     if (ctx->decode.buf == NULL) {
         ctx->decode.buf = OPENSSL_malloc(ctx->decode.bufsize);
         if (ctx->decode.buf == NULL) {
-            COMPerr(COMP_F_BIO_BROTLI_READ, ERR_R_MALLOC_FAILURE);
+            ERR_raise(ERR_LIB_COMP, ERR_R_MALLOC_FAILURE);
             return 0;
         }
         ctx->decode.next_in = ctx->decode.buf;
@@ -516,13 +515,13 @@ static int bio_brotli_read(BIO *b, char *out, int outl)
             bret = BrotliDecoderDecompressStream(ctx->decode.state, &ctx->decode.avail_in, (const uint8_t**)&ctx->decode.next_in,
                                                   &ctx->decode.avail_out, &ctx->decode.next_out, NULL);
             if (bret == BROTLI_DECODER_RESULT_ERROR) {
-                COMPerr(COMP_F_BIO_BROTLI_READ, COMP_R_BROTLI_DECODE_ERROR);
+                ERR_raise(ERR_LIB_COMP, COMP_R_BROTLI_DECODE_ERROR);
                 ERR_add_error_data(1, BrotliDecoderErrorString(BrotliDecoderGetErrorCode(ctx->decode.state)));
                 return 0;
             }
             /* If EOF or we've read everything then return */
             if (BrotliDecoderIsFinished(ctx->decode.state) || ctx->decode.avail_out == 0)
-                return outl - ctx->decode.avail_out;
+                return (int)(outl - ctx->decode.avail_out);
         }
 
         /* If EOF */
@@ -566,7 +565,7 @@ static int bio_brotli_write(BIO *b, const char *in, int inl)
     if (ctx->encode.buf == NULL) {
         ctx->encode.buf = OPENSSL_malloc(ctx->encode.bufsize);
         if (ctx->encode.buf == NULL) {
-            COMPerr(COMP_F_BIO_BROTLI_WRITE, ERR_R_MALLOC_FAILURE);
+            ERR_raise(ERR_LIB_COMP, ERR_R_MALLOC_FAILURE);
             return 0;
         }
         ctx->encode.ptr = ctx->encode.buf;
@@ -608,7 +607,7 @@ static int bio_brotli_write(BIO *b, const char *in, int inl)
         brret = BrotliEncoderCompressStream(ctx->encode.state, BROTLI_OPERATION_FLUSH, &ctx->encode.avail_in, (const uint8_t**)&ctx->encode.next_in,
                                             &ctx->encode.avail_out, &ctx->encode.next_out, NULL);
         if (brret != BROTLI_TRUE) {
-            COMPerr(COMP_F_BIO_BROTLI_WRITE, COMP_R_BROTLI_ENCODE_ERROR);
+            ERR_raise(ERR_LIB_COMP, COMP_R_BROTLI_ENCODE_ERROR);
             ERR_add_error_data(1, "brotli encoder error");
             return 0;
         }
@@ -657,7 +656,7 @@ static int bio_brotli_flush(BIO *b)
         brret = BrotliEncoderCompressStream(ctx->encode.state, BROTLI_OPERATION_FINISH, &ctx->encode.avail_in,
                                             (const uint8_t**)&ctx->encode.next_in, &ctx->encode.avail_out, &ctx->encode.next_out, NULL);
         if (brret != BROTLI_TRUE) {
-            COMPerr(COMP_F_BIO_BROTLI_FLUSH, COMP_R_BROTLI_DECODE_ERROR);
+            ERR_raise(ERR_LIB_COMP, COMP_R_BROTLI_DECODE_ERROR);
             ERR_add_error_data(1, "brotli encoder error");
             return 0;
         }
