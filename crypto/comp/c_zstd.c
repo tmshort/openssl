@@ -20,6 +20,7 @@
 #include <openssl/err.h>
 #include "crypto/cryptlib.h"
 #include "internal/bio.h"
+#include "internal/thread_once.h"
 #include "comp_local.h"
 
 COMP_METHOD *COMP_zstd(void);
@@ -40,11 +41,11 @@ static COMP_METHOD zstd_method_nozstd = {
 # ifndef ZSTD_SHARED
 #  define ZSTD_STATIC_LINKING_ONLY
 # endif
-# include <zstd/zstd.h>
+# include <zstd.h>
 
-/* Note: There is also a linux zstd file in the kernel source */
+/* Note: There is also a linux zstd.h file in the kernel source */
 # ifndef ZSTD_H_235446
-#  error WRONG ZSTD?
+#  error Wrong (i.e. linux) zstd.h included.
 # endif
 
 # if ZSTD_VERSION_MAJOR != 1 && ZSTD_VERSION_MINOR != 4
@@ -60,7 +61,7 @@ static void *zstd_alloc(void *opaque, size_t size)
 
 static void zstd_free(void *opaque, void *address)
 {
-    return OPENSSL_free(address);
+    OPENSSL_free(address);
 }
 
 static ZSTD_customMem zstd_mem_funcs = {
@@ -300,8 +301,8 @@ static void zstd_oneshot_finish(COMP_CTX *ctx)
 }
 
 static int zstd_oneshot_compress_block(COMP_CTX *ctx, unsigned char *out,
-                                         unsigned int olen, unsigned char *in,
-                                         unsigned int ilen)
+                                       unsigned int olen, unsigned char *in,
+                                       unsigned int ilen)
 {
     size_t out_size;
 
@@ -317,8 +318,8 @@ static int zstd_oneshot_compress_block(COMP_CTX *ctx, unsigned char *out,
 }
 
 static int zstd_oneshot_expand_block(COMP_CTX *ctx, unsigned char *out,
-                                       unsigned int olen, unsigned char *in,
-                                       unsigned int ilen)
+                                     unsigned int olen, unsigned char *in,
+                                     unsigned int ilen)
 {
     size_t out_size;
 
@@ -342,7 +343,8 @@ static COMP_METHOD zstd_oneshot_method = {
     zstd_oneshot_expand_block
 };
 
-static int ossl_comp_zstd_init(void)
+static CRYPTO_ONCE zstd_once = CRYPTO_ONCE_STATIC_INIT;
+DEFINE_RUN_ONCE_STATIC(ossl_comp_zstd_init)
 {
 # ifdef ZSTD_SHARED
 #  if defined(OPENSSL_SYS_WINDOWS) || defined(OPENSSL_SYS_WIN32)
@@ -391,7 +393,7 @@ COMP_METHOD *COMP_zstd(void)
     COMP_METHOD *meth = &zstd_method_nozstd;
 
 #ifdef ZSTD
-    if (ossl_comp_zstd_init())
+    if (RUN_ONCE(&zstd_once, ossl_comp_zstd_init))
         meth = &zstd_stateful_method;
 #endif
     return meth;
@@ -402,7 +404,7 @@ COMP_METHOD *COMP_zstd_oneshot(void)
     COMP_METHOD *meth = &zstd_method_nozstd;
 
 #ifdef ZSTD
-    if (ossl_comp_zstd_init())
+    if (RUN_ONCE(&zstd_once, ossl_comp_zstd_init))
         meth = &zstd_oneshot_method;
 #endif
     return meth;
@@ -486,13 +488,13 @@ static int bio_zstd_new(BIO *bi)
 # ifdef ZSTD_SHARED
     (void)COMP_zstd();
     if (zstd_dso == NULL) {
-        COMPerr(COMP_F_BIO_ZSTD_NEW, COMP_R_ZSTD_NOT_SUPPORTED);
+        ERR_raise(ERR_LIB_COMP, COMP_R_ZSTD_NOT_SUPPORTED);
         return 0;
     }
 # endif
     ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (ctx == NULL) {
-        COMPerr(COMP_F_BIO_ZSTD_NEW, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_COMP, ERR_R_MALLOC_FAILURE);
         return 0;
     }
 
@@ -521,7 +523,7 @@ static int bio_zstd_new(BIO *bi)
 
     return 1;
  err:
-    COMPerr(COMP_F_BIO_ZSTD_NEW, ERR_R_MALLOC_FAILURE);
+    ERR_raise(ERR_LIB_COMP, ERR_R_MALLOC_FAILURE);
     ZSTD_freeDStream(ctx->decompress.state);
     ZSTD_freeCStream(ctx->compress.state);
     OPENSSL_free(ctx);
@@ -565,7 +567,7 @@ static int bio_zstd_read(BIO *b, char *out, int outl)
     if (ctx->decompress.buffer == NULL) {
         ctx->decompress.buffer = OPENSSL_malloc(ctx->decompress.bufsize);
         if (ctx->decompress.buffer == NULL) {
-            COMPerr(COMP_F_BIO_ZSTD_READ, ERR_R_MALLOC_FAILURE);
+            ERR_raise(ERR_LIB_COMP, ERR_R_MALLOC_FAILURE);
             return 0;
         }
         ctx->decompress.inbuf.src = ctx->decompress.buffer;
@@ -582,7 +584,7 @@ static int bio_zstd_read(BIO *b, char *out, int outl)
         while (ctx->decompress.inbuf.pos < ctx->decompress.inbuf.size) {
             zret = ZSTD_decompressStream(ctx->decompress.state, &outBuf, &ctx->decompress.inbuf);
             if (ZSTD_isError(zret)) {
-                COMPerr(COMP_F_BIO_ZSTD_READ, COMP_R_ZSTD_DECOMPRESS_ERROR);
+                ERR_raise(ERR_LIB_COMP, COMP_R_ZSTD_DECOMPRESS_ERROR);
                 ERR_add_error_data(1, ZSTD_getErrorName(zret));
                 return -1;
             }
@@ -625,7 +627,7 @@ static int bio_zstd_write(BIO *b, const char *in, int inl)
     if (ctx->compress.outbuf.dst == NULL) {
         ctx->compress.outbuf.dst = OPENSSL_malloc(ctx->compress.bufsize);
         if (ctx->compress.outbuf.dst == NULL) {
-            COMPerr(COMP_F_BIO_ZSTD_WRITE, ERR_R_MALLOC_FAILURE);
+            ERR_raise(ERR_LIB_COMP, ERR_R_MALLOC_FAILURE);
             return 0;
         }
         ctx->compress.outbuf.size = ctx->compress.bufsize;
@@ -639,7 +641,7 @@ static int bio_zstd_write(BIO *b, const char *in, int inl)
     for (;;) {
         /* If data in output buffer write it first */
         while (ctx->compress.write_pos < ctx->compress.outbuf.pos) {
-            ret = BIO_write(next, ctx->compress.outbuf.dst + ctx->compress.write_pos,
+            ret = BIO_write(next, (unsigned char*)ctx->compress.outbuf.dst + ctx->compress.write_pos,
                             ctx->compress.outbuf.pos - ctx->compress.write_pos);
             if (ret <= 0) {
                 BIO_copy_next_retry(b);
@@ -661,7 +663,7 @@ static int bio_zstd_write(BIO *b, const char *in, int inl)
         /* Compress some more */
         zret = ZSTD_compressStream2(ctx->compress.state, &ctx->compress.outbuf, &inBuf, ZSTD_e_end);
         if (ZSTD_isError(zret)) {
-            COMPerr(COMP_F_BIO_ZSTD_WRITE, COMP_R_ZSTD_COMPRESS_ERROR);
+            ERR_raise(ERR_LIB_COMP, COMP_R_ZSTD_COMPRESS_ERROR);
             ERR_add_error_data(1, ZSTD_getErrorName(zret));
             return 0;
         } else if (zret == 0) {
@@ -691,7 +693,7 @@ static int bio_zstd_flush(BIO *b)
     for (;;) {
         /* If data in output buffer write it first */
         while (ctx->compress.write_pos < ctx->compress.outbuf.pos) {
-            ret = BIO_write(next, ctx->compress.outbuf.dst + ctx->compress.write_pos,
+            ret = BIO_write(next, (unsigned char*)ctx->compress.outbuf.dst + ctx->compress.write_pos,
                             ctx->compress.outbuf.pos - ctx->compress.write_pos);
             if (ret <= 0) {
                 BIO_copy_next_retry(b);
@@ -707,7 +709,7 @@ static int bio_zstd_flush(BIO *b)
         /* Compress some more */
         zret = ZSTD_flushStream(ctx->compress.state, &ctx->compress.outbuf);
         if (ZSTD_isError(zret)) {
-            COMPerr(COMP_F_BIO_ZSTD_FLUSH, COMP_R_ZSTD_DECODE_ERROR);
+            ERR_raise(ERR_LIB_COMP, COMP_R_ZSTD_DECODE_ERROR);
             ERR_add_error_data(1, ZSTD_getErrorName(zret));
             return 0;
         }
