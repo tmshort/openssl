@@ -200,7 +200,7 @@ extern "C" {
 
 # define TLSEXT_hash_num                                 10
 
-/* RFC8879 */
+/* Possible compression values from RFC8879 */
 # define TLSEXT_comp_cert_none                            0
 # define TLSEXT_comp_cert_zlib                            1
 # define TLSEXT_comp_cert_brotli                          2

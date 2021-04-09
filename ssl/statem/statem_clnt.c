@@ -1977,7 +1977,6 @@ WORK_STATE tls_post_process_server_certificate(SSL *s, WORK_STATE wst)
 #if !defined(OPENSSL_NO_COMP)
 MSG_PROCESS_RETURN tls_process_server_compressed_certificate(SSL *s, PACKET *pkt)
 {
-
     MSG_PROCESS_RETURN ret = MSG_PROCESS_ERROR;
     PACKET tmppkt;
     BUF_MEM *buf = NULL;

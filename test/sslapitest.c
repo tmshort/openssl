@@ -8989,7 +8989,7 @@ int setup_tests(void)
 #if !defined(OPENSSL_NO_SRP) && !defined(OPENSSL_NO_TLS1_2)
     ADD_ALL_TESTS(test_srp, 6);
 #endif
-#if !defined(OPENSSL_NO_COMP) && (defined(ZIP) || defined(BROTLI))
+#if !defined(OPENSSL_NO_COMP) && (defined(ZIP) || defined(BROTLI) || defined(ZSTD))
     /* Add compression case */
     ADD_ALL_TESTS(test_info_callback, 8);
 #else

@@ -898,7 +898,7 @@ int WPACKET_is_null_buf(WPACKET *pkt);
 
 /*
  * Advances current write location, but does not allocate any bytes
- * Intended to be used fter WPACKET_reserve_bytes()
+ * Intended to be used just after calling WPACKET_reserve_bytes()
  */
 int WPACKET_advance_write(WPACKET *pkt, size_t len);
 
